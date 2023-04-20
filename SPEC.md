@@ -40,9 +40,9 @@ any missing part is assumed to be relative to current.
 
 only method is required
 
-- `>> {id:"abc-123", method: "", params: {...}}` invoking a method
-- `>> {id:null, method: "", params: {...}}` invoking a fire-and-forget method
-- `>> {id:"", method: "", params: {...}}` invoking a method and auto-generate id
+- `>> {id:"abc-123", method: "do_something", params: {...}}` invoking a method
+- `>> {id:null, method: "do_something", params: {...}}` invoking a fire-and-forget method
+- `>> {id:"", method: "do_something", params: {...}}` invoking a method and auto-generate id
 
 ### Receiving Results
 
@@ -51,36 +51,40 @@ when method is missing, a non-null `error` property indicates a failure. otherwi
 - `<< {id:"abc-123", error: {codename:"", message:"", data:{...}}}` - failed result
 - `<< {id:"abc-123", result: {...}}` success result aka. return value
 
-### Event Stream
-
-some methods (ex. `subscribe` or `fetch_iter`) can return an async generator or a full-duplex event stream
-this is indicated by `cursor_id` (unlike `id` which is set by caller)
-the difference between an async generator indicated by `_started` response (ex. `get_iter`) and an event stream indicated by `_est` response (ex. `pubsub`) is that the generator requires the requests to keep responding with event named `"_next"`
-while the event steam does not wait for `_next`
 
 ### Async Generator
 
-- `<< {id:"abc-123", cursor_id: "9876abc", event: "_started", data: {meta:{...}...}}`
-- `<< {id:"abc-123", cursor_id: "9876abc", event: "_batch", data: {items:[...]...}}` - batch may arrive multiple times
-- `>> {id:"abc-123", cursor_id: "9876abc", event: "_next"}`
-- `<< {id:"abc-123", cursor_id: "9876abc", event: "_batch", data: {items:[...]...}}` - batch may arrive multiple times
+A generator that yields data is indicated by "cursor_id" having "event" and "next" properties
+
+- `>> {id:"abc-123", method: "fetch_item", params: {...}}` invoking a method
+- `<< {id:"abc-123", cursor_id: "9876abc", event: "_started", next:"def-456", data: {meta:{...}...}}`
+- `>> {id:"abc-123", cursor_id: "9876abc", event: "_next", next:"def-456"}`
+- `<< {id:"abc-123", cursor_id: "9876abc", event: "_data", next:"ghi-789", data: {items:[...]...}}` - batch may arrive multiple times
+- `>> {id:"abc-123", cursor_id: "9876abc", event: "_next", next:"ghi-789"}`
+- `<< {id:"abc-123", cursor_id: "9876abc", event: "_data", next:"jkl-987", data: {items:[...]...}}` - batch may arrive multiple times
 - `...`
-- `<< {id:"abc-123", cursor_id: "9876abc", event: "_done"}`
+- `<< {id:"abc-123", cursor_id: "9876abc", event: "_done", data:{"status":"success"}}`
 
-### Stream aka `pubsub`
+`"event"` can be
 
-- `<< {id:"abc-123", cursor_id: "9876abc", event: "_est", data: {meta:{...}...}}`
-- `<< {id:"abc-123", cursor_id: "9876abc", event: "my_event", data: {items:[...]...}}` - multiple events arrive, event names are custom
-- `>> {id:"abc-123", cursor_id: "9876abc", event: "my_other_event", data: {items:[...]...}}` - full duplex
-- `<< {id:"abc-123", cursor_id: "9876abc", event: "_done"}`
+- `"_started"`
+- `"_next"` sent to adcance the cursor
+- `"_data"`
+- `"_cancel"`
+- `"_done"`: with `"status"` being one of "success", "cancelled", "error"
 
+out of order "_next" will trigger "_canceled"
 
-### Leaving the Stream
+### Event Stream
 
-both types can be left by calling `_cancel`
+some methods (ex. `subscribe` or `pubsub`) a full-duplex event stream
 
-- `>> {id:"abc-123”, cursor_id: "9876abc", event: "_cancel"}`
-- `<< {id:"abc-123”, cursor_id: "9876abc", event: "_canceled", data:{}}` - in case of error or in case of other party cancel
-- `<< {id:"abc-123", cursor_id: "9876abc", event: "_done"}` - done is fired after canceled to do cleanup
+- `>> {id:"abc-123", method: "pubsub", params: {"channel":"my_ch"...}}` invoking a method
+- `<< {id:"abc-123", stream_id: "9876abc", event: "_started", data: {meta:{...}...}}`
+- `<< {id:"abc-123", stream_id: "9876abc", event: "my_event", data: {items:[...]...}}` - multiple events arrive, event names are custom
+- `>> {id:"abc-123", stream_id: "9876abc", event: "my_other_event", data: {items:[...]...}}` - full duplex
+- `>> {id:"abc-123", stream_id: "9876abc", event: "_close"}`
+- `<< {id:"abc-123", stream_id: "9876abc", event: "_closed", data:{"status":"success"}}` Note: "_closed" might get fired without "_close" request
 
+`"status"` of `"_closed"` being one of "success", "closed", "error"
 
