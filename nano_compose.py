@@ -12,6 +12,34 @@ import shlex
 
 import yaml
 
+from collections import defaultdict
+
+stats_balance_mothod = defaultdict(int)
+stats_balance_mothod_caller = defaultdict(int)
+stats_balance_inter_mod = defaultdict(int)
+stats_total_at = 0
+stats_total_mothod = defaultdict(int)
+stats_total_mothod_caller = defaultdict(int)
+stats_total_inter_mod = defaultdict(int)
+stats_err_at = 0
+stats_err_mothod = defaultdict(int)
+stats_err_mothod_caller = defaultdict(int)
+stats_err_inter_mod = defaultdict(int)
+stats = {
+    "balance_mothod": stats_balance_mothod,
+    "balance_mothod_caller": stats_balance_mothod_caller,
+    "balance_inter_mod": stats_balance_inter_mod,
+    "total_at": stats_total_at,
+    "total_mothod": stats_total_mothod,
+    "total_mothod_caller": stats_total_mothod_caller,
+    "total_inter_mod": stats_total_inter_mod,
+    "err_at": stats_err_at,
+    "err_mothod": stats_err_mothod,
+    "err_mothod_caller": stats_err_mothod_caller,
+    "err_inter_mod": stats_err_inter_mod,
+}
+
+
 STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO = (0,1,2)
 
 # more details in unistd.h
@@ -23,6 +51,8 @@ libc.dup2.restype = ctypes.c_int
 # man close(2): int close(int fd);
 libc.close.argtypes = (ctypes.c_int,)
 libc.close.restype = ctypes.c_int
+
+
 
 def log(*msgs, sep=" ", end="\n"):
     """similar to print, but uses stderr"""
@@ -93,6 +123,22 @@ def can_invoke(module_name_from, module_name_to, from_uses, to_only_from):
         return False
     return to_only_from is None or module_name_from in to_only_from
 
+def stats_delta(module_name_caller, module_name_callee, method, val, err=0):
+    global stats_total_at, stats_err_at
+    stats_balance_mothod[method] += val
+    stats_balance_mothod_caller[module_name_caller+":"+method] += val
+    stats_balance_inter_mod[module_name_caller+":"+module_name_callee] += val
+    if val>0:
+        stats_total_at = time.time()
+        stats_total_mothod[method] += 1
+        stats_total_mothod_caller[module_name_caller+":"+method] += 1
+        stats_total_inter_mod[module_name_caller+":"+module_name_callee] += 1
+    if err:
+        stats_err_at = time.time()
+        stats_err_mothod[method] += err
+        stats_err_mothod_caller[module_name_caller+":"+method] += err
+        stats_err_inter_mod[module_name_caller+":"+module_name_callee] += err
+    log("stats: ", stats)
 
 def invoke(nano_compose, module_name_from, line, parsed):
     method = parsed["method"]
@@ -100,12 +146,13 @@ def invoke(nano_compose, module_name_from, line, parsed):
     params = parsed["params"]
     parts = method.split(".", 1)
     module_name_to = parts[0]
+    stats_delta(module_name_from, module_name_to, method, 1)
     mod_from = nano_compose.modules[module_name_from]
     mod_to = nano_compose.modules[module_name_to]
     from_uses = mod_from["uses"]
     to_only_from = mod_to["only_from"]
     
-    nano_compose.pending_ids[id] = module_name_from
+    nano_compose.pending_ids[id] = (module_name_from, method)
     if can_invoke(module_name_from, module_name_to, from_uses, to_only_from):
         os.write(mod_to["w"], line)
         return
@@ -120,7 +167,9 @@ def invoke(nano_compose, module_name_from, line, parsed):
 
 def pass_result(nano_compose, module_name_from, line, parsed):
     id = parsed["id"]
-    module_name_to = nano_compose.pending_ids[id]
+    module_name_to, method = nano_compose.pending_ids[id]
+    with_err = 1 if "error" in parsed else 0
+    stats_delta(module_name_to, module_name_from, method, -1, with_err)
     os.write(nano_compose.modules[module_name_to]["w"], line)
     del nano_compose.pending_ids[id]
 
