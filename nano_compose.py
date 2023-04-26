@@ -8,6 +8,7 @@ import ctypes
 import ctypes.util
 import select
 import typing
+import shlex
 
 import yaml
 
@@ -57,7 +58,12 @@ def child_std_fd(cr, cw):
 
 def run_module_child(nano_compose, module_name, module_desc, cr, cw):
     child_std_fd(cr, cw)
-    return os.execl(module_desc["fork"], module_desc["fork"])
+    # TODO: if container with build/image exec podman
+    fork_cmd = module_desc["fork"]
+    args = shlex.split(fork_cmd)
+    return os.execl(args[0], *args)
+
+
 
 def run_module(nano_compose, module_name, module_desc):
     # consider (cr, pw) = multiprocessing.Pipe() # this might involve pickle
