@@ -62,13 +62,16 @@ def log(*msgs, sep=" ", end="\n"):
 
 class NanoCompose:
     def __init__(self):
-        self.modules = {}
+        self.modules = {
+            "_admin": {"uses": set(), "only_from": None, "desc": {}},
+        }
         self.r = {}
         self.w = {}
         self.pids = []
         self.reader_poll = select.poll()
         self.reader_files = {}
         self.pending_ids = {}
+
 
 def child_std_fd(cr, cw):
     """
@@ -138,38 +141,53 @@ def stats_delta(module_name_caller, module_name_callee, method, val, err=0):
         stats_err_mothod[method] += err
         stats_err_mothod_caller[module_name_caller+":"+method] += err
         stats_err_inter_mod[module_name_caller+":"+module_name_callee] += err
-    log("stats: ", stats)
 
-def invoke(nano_compose, module_name_from, line, parsed):
+def admin_invoke(parsed):
+    method = parsed["method"]
+    id = parsed["id"]
+    if method!="_admin.get_stats":
+        res_parsed = {"id": id, "error":{
+            "codename": "xrpc.forbidden",
+            "message": f"unknown method {method}",
+        }}
+    res_parsed = {"id": id, "result": stats}
+    return res_parsed
+
+def invoke(nano_compose, module_name_caller, line, parsed):
     method = parsed["method"]
     id = parsed["id"]
     params = parsed["params"]
     parts = method.split(".", 1)
-    module_name_to = parts[0]
-    stats_delta(module_name_from, module_name_to, method, 1)
-    mod_from = nano_compose.modules[module_name_from]
-    mod_to = nano_compose.modules[module_name_to]
-    from_uses = mod_from["uses"]
-    to_only_from = mod_to["only_from"]
-    
-    nano_compose.pending_ids[id] = (module_name_from, method)
-    if can_invoke(module_name_from, module_name_to, from_uses, to_only_from):
-        os.write(mod_to["w"], line)
+    module_name_callee = parts[0]
+    stats_delta(module_name_caller, module_name_callee, method, 1)
+    mod_caller = nano_compose.modules[module_name_caller]
+    mod_callee = nano_compose.modules[module_name_callee]
+    from_uses = mod_caller["uses"]
+    to_only_from = mod_callee["only_from"]
+    nano_compose.pending_ids[id] = (module_name_caller, method)
+    if not can_invoke(module_name_caller, module_name_callee, from_uses, to_only_from):
+        res_parsed = {"id": id, "error":{
+            "codename": "xrpc.forbidden",
+            "message": f"module {module_name_caller} is not allowed to call {module_name_callee}",
+        }}
+        log("forbidden: ", res_parsed)
+        res_line = json.dumps(res_parsed, ensure_ascii=False).encode("utf-8")+b"\n"
+        pass_result(nano_compose, module_name_callee, res_line, res_parsed)
         return
-    res_parsed = {"id": id, "error":{
-        "codename": "xrpc.forbidden",
-        "message": f"module {module_name_from} is not allowed to call {module_name_to}",
-    }}
-    log("forbidden: ", res_parsed)
-    res_line = json.dumps(res_parsed, ensure_ascii=False).encode("utf-8")+b"\n"
-    pass_result(nano_compose, module_name_from, res_line, res_parsed)
+    if module_name_callee == "_admin":
+        res_parsed = admin_invoke(parsed)
+        res_line = json.dumps(res_parsed, ensure_ascii=False).encode("utf-8")+b"\n"
+        return pass_result(nano_compose, module_name_callee, res_line, res_parsed)
+    os.write(mod_callee["w"], line)
+    return
 
 
-def pass_result(nano_compose, module_name_from, line, parsed):
+
+def pass_result(nano_compose, module_name_callee, line, parsed):
     id = parsed["id"]
     module_name_to, method = nano_compose.pending_ids[id]
     with_err = 1 if "error" in parsed else 0
-    stats_delta(module_name_to, module_name_from, method, -1, with_err)
+    stats_delta(module_name_to, module_name_callee, method, -1, with_err)
     os.write(nano_compose.modules[module_name_to]["w"], line)
     del nano_compose.pending_ids[id]
 
