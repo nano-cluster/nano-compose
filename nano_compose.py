@@ -9,7 +9,7 @@ import ctypes.util
 import select
 import typing
 import shlex
-
+import signal
 import yaml
 
 from collections import defaultdict
@@ -51,8 +51,12 @@ libc.dup2.restype = ctypes.c_int
 # man close(2): int close(int fd);
 libc.close.argtypes = (ctypes.c_int,)
 libc.close.restype = ctypes.c_int
+# man prctl(2): int prctl(int option, int arg2);
+if sys.platform=='linux':
+    libc.prctl.argtypes = (ctypes.c_int, ctypes.c_long)
+    libc.prctl.restype = ctypes.c_int
 
-
+PR_SET_PDEATHSIG = 1
 
 def log(*msgs, sep=" ", end="\n"):
     """similar to print, but uses stderr"""
@@ -104,6 +108,10 @@ def run_module(nano_compose, module_name, module_desc):
     pr, cw = os.pipe2(0)
     pid = os.fork()
     if pid==0:
+        # when parent dies send SIGHUP to child
+        # SIGHUP: Hangup detected on controlling terminal or death of controlling process
+        if sys.platform=='linux':
+            libc.prctl(PR_SET_PDEATHSIG, signal.SIGHUP.value);
         return run_module_child(nano_compose, module_name, module_desc, cr, cw)
     only_from = set(module_desc["only_from"] or []) if "only_from" in module_desc else None
     nano_compose.modules[module_name] = {
