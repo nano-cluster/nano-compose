@@ -223,7 +223,8 @@ def main():
             module_name_from = nano_compose.r[fd]
             f: typing.IO = nano_compose.reader_files[fd]
             line = f.readline()
-            parsed = json.loads(line)
+            try: parsed = json.loads(line)
+            except json.decoder.JSONDecodeError: continue
             handle_one(nano_compose, module_name_from, line, parsed)
     os.wait()
 
